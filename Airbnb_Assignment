@@ -1,1 +1,126 @@
+import pandas as pd
+import plotly.express as px
+import scipy.stats as stats
+import streamlit as st
+from wordcloud import WordCloud, STOPWORDS
+pd.set_option('display.max_columns', None)
+
+df = pd.read_csv('turkey.csv.gz', compression='gzip', header=0,
+                 sep=',', quotechar='"', encoding='utf-8')
+
+# To show the datatype and Non-Nan count for each attribute       
+df.info(show_counts=True)
+
+# Converting attributes with object datatype to numeric values
+df['price'] = df['price'].str.replace('$', '').str.replace(',', '').astype(float)
+df = df.drop(['neighbourhood'], axis=1)
+df = df.rename(columns={'neighbourhood_cleansed': 'neighbourhood'})
+
+#################################################################################################
+## SIMPLE DATA ANALYSIS
+#To understand the price distribution for each neighbourhood and room_type combination
+df_room = df[['neighbourhood','room_type','price']]
+grouped_df = df_room.groupby(['neighbourhood', 'room_type'])
+
+# Get the 'price' column from the grouped dataframe
+price_grouped = grouped_df['price']
+
+# Compute the skewness and kurtosis for each group in the grouped dataframe
+skewness = price_grouped.apply(lambda x: stats.skew(x.dropna()))
+kurtosis = price_grouped.apply(lambda x: stats.kurtosis(x.dropna()))
+
+# Convert the resulting series to a dataframe and reset the index
+result_df = pd.concat([skewness, kurtosis], axis=1)
+result_df.columns = ['skewness', 'kurtosis']
+result_df.reset_index(inplace=True)
+result_df.info()
+
+# Create the pivot table for kurtosis and skewness
+kurtosis_df = result_df.pivot_table(index='neighbourhood', columns='room_type', values='kurtosis').round(2)
+skewness_df = result_df.pivot_table(index='neighbourhood', columns='room_type', values='skewness').round(2)
+
+###################################################################################################
+# Creating Dashboard Using Streamlit
+st.title("Welcome to My DashBoard")
+st.header("Interesting Observation About Airbnb Listings in Istanbul City")
+
+# Create four tabs for streamlit web application, each tab representing one visual object
+tabs = st.tabs(["BarChart","Kurtosis","Skewness","Wordcloud"])
+
+
+with tabs[0]:
+    # To understand the number of listings for each category of room_type and neighborhood
+    df_count = df.groupby(['neighbourhood','room_type'])['id'].count().reset_index(name='count')
+    pivot = df_count.pivot(index='neighbourhood', columns='room_type', values='count')
+
+    # create selection boxes
+    neighbourhood_selection = st.selectbox("Select Neighbourhood", ['All'] + list(pivot.index))
+    room_type_selection = st.radio("Select Room Type", ['All'] + list(pivot.columns))
+
+    # Filter the pivot table based on the selection
+    if neighbourhood_selection != "All":
+        pivot = pivot.loc[[neighbourhood_selection], :]
+    if room_type_selection != "All":
+        pivot = pivot.loc[:, [room_type_selection]]
+
+    # Create the stacked bar chart using Plotly
+    fig = px.bar(pivot, barmode="stack", height=600, width=600, 
+             labels=dict(x="Neighbourhood", y="Number of Listings", color="Room Type"))
+    fig.update_layout(title="Frequency Count of Room Types by Neighbourhood")
+    st.plotly_chart(fig)    
+    
+with tabs[1]:
+    # Add a slider widget for kurtosis value
+    kurtosis_slider = st.slider('Select Kurtosis Value:', min_value=-26, max_value=500, value=500, step=20)
+
+    # Filter the dataframe by kurtosis value
+    filtered_df = kurtosis_df.where(kurtosis_df <= kurtosis_slider)
+    st.plotly_chart(px.imshow(filtered_df, 
+                               labels=dict(x="Room Type", y="Neighbourhood", color="Kurtosis"), 
+                               zmin=-26, zmax= 500, text_auto=True, aspect='auto',
+                               x=['Entire home/apt', 'Hotel room', 'Private room', 'Shared room'], 
+                               y=kurtosis_df.index,
+                               title='Kurtosis of Price Distribution by Room Type and Neighbourhood',
+                               width=800,height=1200), use_container_width=True)
+    st.caption("Kurtosis is a measure of the 'peakedness' of a distribution. A low kurtosis value\
+               indicates that the prices are more evenly distributed, while a high value indicates\
+                that there are some listings that are much higher than the majority.")
+    
+    
+with tabs[2]:
+    # Add a slider widget for skewness value
+    skewness_slider = st.slider('Select Skewness Value:', min_value=-2, max_value=50, value=50, step=2)
+
+    # Filter the dataframe by kurtosis value
+    filtered_df2 = skewness_df.where(skewness_df <= skewness_slider)
+    st.plotly_chart(px.imshow(filtered_df2, 
+                               labels=dict(x="Room Type", y="Neighbourhood", color="Skewness"), 
+                               zmin=-2, zmax= 50, text_auto=True, aspect='auto',
+                               x=['Entire home/apt', 'Hotel room', 'Private room', 'Shared room'], 
+                               y=skewness_df.index,
+                               title='Skewness of Price Distribution by Room Type and Neighbourhood',
+                               width=800,height=1200), use_container_width=True)
+    st.caption("Skewness is a measure of the symmetry of the distribution. A positive skewness indicates\
+               that there are more lower-priced listings than higher-priced listings, and thus the distribution\
+                is generally skewed to the right.")
+                               
+ 
+with tabs[3]:
+    st.title("Wordcloud for the Amenities Offered by the Host")
+    # Concatenates all the text data into a single string variable
+    all_comments = ' '.join(df['amenities'])
+    # Remove commonly used word and some specificied word from the text data
+    stopwords = set(STOPWORDS)
+    stopwords.update(['term','stays','long'])
+    # Create a streamlit slider widget to make the wordcloud interactive
+    min_font_size = st.slider('Minimum Font Size', 5, 50, 10, step=5)
+    # Set the parameters for WordCloud() function
+    wordcloud = WordCloud(width = 400, height = 400, 
+                background_color ='white', 
+                stopwords = stopwords, 
+                min_font_size = min_font_size).generate(all_comments)
+    # Use streamlit image to display the wordcloud
+    st.image(wordcloud.to_array(), use_column_width=True)
+    
+    
 
